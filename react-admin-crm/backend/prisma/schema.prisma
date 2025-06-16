@@ -1,0 +1,304 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// User model with authentication and roles
+model User {
+  id          Int      @id @default(autoincrement())
+  email       String   @unique
+  password    String
+  firstName   String?
+  lastName    String?
+  role        UserRole @default(ADMIN)
+  userType    UserType @default(INVESTOR) // For admin to track user types
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  // KYC/KYB Relations
+  kycProfile  KYCProfile?
+  kybProfile  KYBProfile?
+  
+  // Wallet Relations
+  wallets     Wallet[]
+  
+  // DID Relations
+  didProfiles DIDProfile[]
+  
+  // VC Relations
+  verifiableCredentials VerifiableCredential[]
+  
+  // SBT Relations
+  soulboundTokens SoulboundToken[]
+  
+  // Asset Relations (for issuers)
+  issuedAssets Asset[] @relation("AssetIssuer")
+  
+  // Investment Relations (for investors)
+  investments Investment[]
+}
+
+enum UserRole {
+  ADMIN
+}
+
+enum UserType {
+  ISSUER
+  INVESTOR
+  VERIFIER
+  COMPLIANCE_OFFICER
+}
+
+// KYC (Know Your Customer) Profile
+model KYCProfile {
+  id                Int       @id @default(autoincrement())
+  userId            Int       @unique
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Personal Information
+  dateOfBirth       DateTime?
+  nationality       String?
+  phoneNumber       String?
+  address           String?
+  city              String?
+  country           String?
+  postalCode        String?
+  
+  // Document Verification
+  idDocumentType    String?
+  idDocumentNumber  String?
+  idDocumentExpiry  DateTime?
+  
+  // Verification Status
+  verificationStatus VerificationStatus @default(PENDING)
+  verifiedAt        DateTime?
+  verifiedBy        String?
+  
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+}
+
+// KYB (Know Your Business) Profile
+model KYBProfile {
+  id                Int       @id @default(autoincrement())
+  userId            Int       @unique
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Business Information
+  companyName       String
+  businessType      String?
+  registrationNumber String?
+  taxId             String?
+  incorporationDate DateTime?
+  
+  // Business Address
+  businessAddress   String?
+  businessCity      String?
+  businessCountry   String?
+  businessPostalCode String?
+  
+  // Verification Status
+  verificationStatus VerificationStatus @default(PENDING)
+  verifiedAt        DateTime?
+  verifiedBy        String?
+  
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+}
+
+enum VerificationStatus {
+  PENDING
+  IN_REVIEW
+  APPROVED
+  REJECTED
+  EXPIRED
+}
+
+// DID (Decentralized Identity) Profile
+model DIDProfile {
+  id          Int      @id @default(autoincrement())
+  userId      Int
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  didMethod   String   // e.g., "did:ethr", "did:key", etc.
+  didId       String   @unique
+  publicKey   String
+  privateKey  String?  // Encrypted
+  metadata    Json?
+  
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// Verifiable Credentials
+model VerifiableCredential {
+  id          Int      @id @default(autoincrement())
+  userId      Int
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  credentialType String
+  issuer      String
+  subject     String
+  issuanceDate DateTime
+  expirationDate DateTime?
+  
+  credential  Json     // Full VC document
+  proof       Json?    // Cryptographic proof
+  
+  status      VCStatus @default(ACTIVE)
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+enum VCStatus {
+  ACTIVE
+  REVOKED
+  EXPIRED
+  SUSPENDED
+}
+
+// Soulbound Tokens (SBT)
+model SoulboundToken {
+  id          Int      @id @default(autoincrement())
+  userId      Int
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  tokenType   String
+  tokenId     String   @unique
+  contractAddress String
+  blockchain  String   @default("Ethereum")
+  
+  metadata    Json
+  attributes  Json?
+  
+  mintedAt    DateTime
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// Wallet Management
+model Wallet {
+  id          Int      @id @default(autoincrement())
+  userId      Int
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  walletType  WalletType
+  address     String   @unique
+  publicKey   String?
+  encryptedPrivateKey String? // Encrypted private key
+  
+  blockchain  String   @default("Ethereum")
+  isActive    Boolean  @default(true)
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+enum WalletType {
+  METAMASK
+  WALLET_CONNECT
+  HARDWARE
+  CUSTODIAL
+  MULTI_SIG
+}
+
+// Asset Management (RWA Tokenization)
+model Asset {
+  id            Int      @id @default(autoincrement())
+  issuerId      Int
+  issuer        User     @relation("AssetIssuer", fields: [issuerId], references: [id])
+  
+  // Asset Details
+  name          String
+  symbol        String   @unique
+  description   String?
+  assetType     AssetType
+  totalSupply   Decimal
+  
+  // Tokenization Details
+  contractAddress String?
+  blockchain    String   @default("Ethereum")
+  tokenStandard String   @default("ERC-20")
+  
+  // Valuation
+  valuationAmount Decimal?
+  valuationCurrency String @default("USD")
+  lastValuationDate DateTime?
+  
+  // Status
+  status        AssetStatus @default(DRAFT)
+  
+  // Metadata
+  metadata      Json?
+  documents     Json?     // Array of document references
+  
+  // Relations
+  investments   Investment[]
+  
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+enum AssetType {
+  REAL_ESTATE
+  COMMODITIES
+  ART_COLLECTIBLES
+  PRIVATE_EQUITY
+  BONDS
+  INFRASTRUCTURE
+  INTELLECTUAL_PROPERTY
+  OTHER
+}
+
+enum AssetStatus {
+  DRAFT
+  UNDER_REVIEW
+  APPROVED
+  TOKENIZED
+  TRADING
+  SUSPENDED
+  DELISTED
+}
+
+// Investment Tracking
+model Investment {
+  id          Int      @id @default(autoincrement())
+  investorId  Int
+  investor    User     @relation(fields: [investorId], references: [id])
+  assetId     Int
+  asset       Asset    @relation(fields: [assetId], references: [id])
+  
+  // Investment Details
+  amount      Decimal
+  currency    String   @default("USD")
+  tokenAmount Decimal
+  pricePerToken Decimal
+  
+  // Transaction Details
+  transactionHash String?
+  blockNumber   Int?
+  
+  // Status
+  status      InvestmentStatus @default(PENDING)
+  
+  investedAt  DateTime @default(now())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+enum InvestmentStatus {
+  PENDING
+  CONFIRMED
+  FAILED
+  REFUNDED
+}
