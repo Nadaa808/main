@@ -1,6 +1,7 @@
 const express = require('express');
 const SumsubService = require('../services/sumsubService');
 const { PrismaClient } = require('@prisma/client');
+const { authenticateToken } = require('../middleware/auth');
 
 const router = express.Router();
 const prisma = new PrismaClient();
@@ -52,6 +53,43 @@ router.get('/status/:applicantId', async(req, res) => {
         res.status(400).json(result);
     } catch (err) {
         console.error('Get applicant status error:', err);
+        res.status(500).json({ success: false, error: 'Internal server error' });
+    }
+});
+
+// Endpoint to create Sumsub applicant and return widget token
+router.post('/applicant', authenticateToken, async(req, res) => {
+    try {
+        const user = req.user; // extracted from JWT by auth middleware
+
+        const applicantData = {
+            userId: user.id,
+            firstName: user.firstName,
+            lastName: user.lastName,
+            email: user.email,
+            phone: user.phoneNumber,
+            type: 'individual'
+        };
+
+        const result = await sumsubService.createApplicant(applicantData);
+        if (!result.success) {
+            return res.status(400).json({ success: false, error: result.error || 'Failed to create applicant' });
+        }
+
+        // Persist applicantId & token on submission record? (optional)
+        await prisma.kYCSubmission.create({
+            data: {
+                userId: user.id,
+                submissionType: 'KYC',
+                status: 'PENDING',
+                sumsubApplicantId: result.applicantId,
+                sumsubToken: result.token
+            }
+        });
+
+        res.json({ success: true, applicantId: result.applicantId, token: result.token });
+    } catch (error) {
+        console.error('Create applicant error:', error);
         res.status(500).json({ success: false, error: 'Internal server error' });
     }
 });

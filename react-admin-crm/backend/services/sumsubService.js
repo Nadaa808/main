@@ -6,6 +6,7 @@ class SumsubService {
         this.baseURL = process.env.SUMSUB_BASE_URL || 'https://api.sumsub.com';
         this.appToken = process.env.SUMSUB_APP_TOKEN;
         this.secretKey = process.env.SUMSUB_SECRET_KEY;
+        this.webhookSecret = process.env.SUMSUB_WEBHOOK_SECRET || this.secretKey;
         this.levelName = process.env.SUMSUB_LEVEL_NAME || 'basic-kyc-level';
     }
 
@@ -159,7 +160,7 @@ class SumsubService {
      * Verify webhook signature
      */
     verifyWebhook(payload, signature) {
-        const expectedSignature = crypto.createHmac('sha256', this.secretKey)
+        const expectedSignature = crypto.createHmac('sha256', this.webhookSecret)
             .update(payload)
             .digest('hex');
 

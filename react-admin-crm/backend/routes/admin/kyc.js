@@ -1,10 +1,14 @@
 const express = require('express');
 const { PrismaClient } = require('@prisma/client');
 const SumsubService = require('../../services/sumsubService');
+const { authorizeRoles } = require('../../middleware/auth');
 
 const router = express.Router();
 const prisma = new PrismaClient();
 const sumsubService = new SumsubService();
+
+// Restrict all endpoints in this router to ADMIN role
+router.use(authorizeRoles('ADMIN'));
 
 /**
  * Get all KYC submissions with filters (Admin Dashboard)
@@ -271,6 +275,59 @@ router.post('/submission/:submissionId/reject', async(req, res) => {
         });
     } catch (error) {
         console.error('Reject Submission Error:', error);
+        res.status(500).json({ success: false, error: 'Internal server error' });
+    }
+});
+
+/**
+ * Export submissions as CSV
+ * GET /api/admin/kyc/export
+ * (uses same filters as list endpoint)
+ */
+router.get('/export', async(req, res) => {
+    try {
+        const { status, search, submissionType, verificationType } = req.query;
+
+        // Build where filter as in list endpoint
+        const where = {};
+        if (status) where.status = status;
+        if (submissionType) where.submissionType = submissionType;
+        if (verificationType) where.verificationType = verificationType;
+        if (search) {
+            where.OR = [
+                { user: { email: { contains: search, mode: 'insensitive' } } },
+                { user: { firstName: { contains: search, mode: 'insensitive' } } },
+                { user: { lastName: { contains: search, mode: 'insensitive' } } }
+            ];
+        }
+
+        const submissions = await prisma.kYCSubmission.findMany({
+            where,
+            include: { user: true }
+        });
+
+        // Convert to CSV
+        const headers = [
+            'id', 'email', 'firstName', 'lastName', 'submissionType', 'status', 'verificationType', 'walletAddress', 'createdAt'
+        ];
+        const rows = submissions.map((s) => [
+            s.id,
+            s.user.email,
+            s.user.firstName || '',
+            s.user.lastName || '',
+            s.submissionType,
+            s.status,
+            s.verificationType || '',
+            s.walletAddress || '',
+            s.createdAt.toISOString()
+        ]);
+        const csv = [headers.join(','), ...rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(','))].join('\n');
+
+        res.setHeader('Content-Type', 'text/csv');
+        res.setHeader('Content-Disposition', 'attachment; filename="kyc_submissions.csv"');
+        res.send(csv);
+    } catch (error) {
+        console.error('Export submissions error:', error);
         res.status(500).json({ success: false, error: 'Internal server error' });
     }
 });

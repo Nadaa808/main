@@ -3,8 +3,6 @@ import React, { useState, useEffect } from 'react';
 import './KYCManagement.css';
 
 const KYCManagement = () => {
-    // State declarations
-    const [submissions, setSubmissions] = useState([]);
     const [filteredSubmissions, setFilteredSubmissions] = useState([]);
     const [loading, setLoading] = useState(true);
     const [statusFilter, setStatusFilter] = useState('ALL');
@@ -13,12 +11,10 @@ const KYCManagement = () => {
     const [totalPages, setTotalPages] = useState(1);
     const [stats, setStats] = useState({ total: 0, pending: 0, approved: 0, rejected: 0 });
 
-    // Modal & notification state
     const [detailModal, setDetailModal] = useState({ open: false, submission: null });
     const [actionModal, setActionModal] = useState({ open: false, submission: null, action: null });
     const [notification, setNotification] = useState({ open: false, message: '', type: 'success' });
 
-    // Fetch submissions on dependency change
     useEffect(() => {
         fetchSubmissions();
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -33,68 +29,80 @@ const KYCManagement = () => {
                 ...(statusFilter !== 'ALL' && { status: statusFilter }),
                 ...(searchTerm && { search: searchTerm })
             });
-            const response = await fetch(`/api/admin/kyc/submissions?${params}`, {
+            const res = await fetch(`/api/admin/kyc/submissions?${params}`, {
                 headers: {
-                    'Authorization': `Bearer ${localStorage.getItem('adminToken')}`,
+                    Authorization: `Bearer ${localStorage.getItem('adminToken')}`,
                     'Content-Type': 'application/json'
                 }
             });
-            if (!response.ok) throw new Error('Failed to fetch submissions');
-            const data = await response.json();
-            setSubmissions(data.data.submissions);
+            if (!res.ok) throw new Error('Fetch failed');
+            const data = await res.json();
             setFilteredSubmissions(data.data.submissions);
             setTotalPages(data.data.pagination.totalPages);
             setStats(data.data.stats);
-        } catch (err) {
-            console.error(err);
+        } catch (e) {
+            console.error(e);
             showNotification('Failed to fetch submissions', 'error');
         } finally {
             setLoading(false);
         }
     };
 
-    const handleApproveReject = async(submissionId, action, reason = '') => {
+    const handleApproveReject = async(id, action, reason = '') => {
         try {
-            const endpoint = `/api/admin/kyc/submission/${submissionId}/${action}`;
-            const response = await fetch(endpoint, {
+            const res = await fetch(`/api/admin/kyc/submission/${id}/${action}`, {
                 method: 'POST',
                 headers: {
-                    'Authorization': `Bearer ${localStorage.getItem('adminToken')}`,
+                    Authorization: `Bearer ${localStorage.getItem('adminToken')}`,
                     'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({ reason, adminId: localStorage.getItem('adminId') || 'admin_001' })
             });
-            if (!response.ok) throw new Error(`Failed to ${action} submission`);
-            showNotification(`Submission ${action}d successfully`, 'success');
+            if (!res.ok) throw new Error();
+            showNotification(`Submission ${action}d`, 'success');
             fetchSubmissions();
-            closeModal('actionModal');
-        } catch (err) {
-            console.error(err);
+            closeModal('action');
+        } catch (e) {
+            console.error(e);
             showNotification(`Failed to ${action} submission`, 'error');
         }
     };
 
-    // Helper UI utilities
     const showNotification = (message, type = 'success') => {
         setNotification({ open: true, message, type });
         setTimeout(() => setNotification({ open: false, message: '', type: 'success' }), 3000);
     };
 
-    const openModal = (modalType, data = null) => {
-        if (modalType === 'detail') setDetailModal({ open: true, submission: data });
-        else if (modalType === 'action') setActionModal({ open: true, submission: data.submission, action: data.action });
+    const openModal = (kind, payload = null) => {
+        if (kind === 'detail') setDetailModal({ open: true, submission: payload });
+        else setActionModal({ open: true, submission: payload.submission, action: payload.action });
     };
 
-    const closeModal = (modalType) => {
-        if (modalType === 'detail') setDetailModal({ open: false, submission: null });
-        else if (modalType === 'action') setActionModal({ open: false, submission: null, action: null });
+    const closeModal = (kind) => {
+        if (kind === 'detail') setDetailModal({ open: false, submission: null });
+        else setActionModal({ open: false, submission: null, action: null });
     };
 
-    // Visual helper functions
-    const getStatusClass = (status) => `status-${status.toLowerCase().replace('_', '-')}`;
-    const getUserInitials = (user) => user.firstName[0] + user.lastName[0];
+    const doExport = async() => {
+        try {
+            const token = localStorage.getItem('adminToken');
+            const res = await fetch('/api/admin/kyc/export', { headers: { Authorization: `Bearer ${token}` } });
+            if (!res.ok) throw new Error();
+            const blob = await res.blob();
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'kyc_submissions.csv';
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
+        } catch (e) {
+            console.error(e);
+            showNotification('Export failed', 'error');
+        }
+    };
 
-    // Render
     return ( <
         div className = "kyc-management" > { /* Header */ } <
         header className = "kyc-header" >
@@ -172,11 +180,11 @@ const KYCManagement = () => {
         div className = "action-buttons" >
         <
         button className = "btn btn-outline"
-        onClick = { fetchSubmissions } > 🔄Refresh < /button> <
+        onClick = { fetchSubmissions } > 🔄Refresh <
+        /button> <
         button className = "btn btn-outline"
-        onClick = {
-            () => window.open('/api/admin/kyc/export', '_blank')
-        } > 📥Export < /button> < /
+        onClick = { doExport } > 📥Export <
+        /button> < /
         div > <
         /div> < /
         div >
@@ -184,14 +192,18 @@ const KYCManagement = () => {
         { /* Table */ } <
         div className = "table-container" > {
             loading ? ( <
-                div className = "loading" > < div className = "spinner" / > < /div>
+                div className = "loading" >
+                <
+                div className = "spinner" / >
+                <
+                /div>
             ) : ( <
                 SubmissionsTable submissions = { filteredSubmissions }
                 onViewDetails = {
                     (s) => openModal('detail', s)
                 }
                 onAction = {
-                    (s, action) => openModal('action', { submission: s, action })
+                    (s, a) => openModal('action', { submission: s, action: a })
                 }
                 />
             )
@@ -235,7 +247,7 @@ const KYCManagement = () => {
     );
 };
 
-// ---- Reusable child components ----
+// ----------------- Child components ------------------
 const StatCard = ({ title, value, icon, color }) => ( <
     div className = { `stat-card stat-${color.replace('#', '')}` } >
     <
@@ -279,10 +291,14 @@ const SubmissionsTable = ({ submissions, onViewDetails, onAction }) => {
             <
             tr >
             <
-            th > User < /th><th>Type</th > < th > Status < /th><th>Verification</th > < th > Submitted < /th><th>Actions</th >
-            <
-            /tr> < /
-            thead > <
+            th > User < /th> <
+            th > Type < /th> <
+            th > Status < /th> <
+            th > Verification < /th> <
+            th > Submitted < /th> <
+            th > Actions < /th> < /
+            tr > <
+            /thead> <
             tbody > {
                 submissions.map((s) => ( <
                         tr key = { s.id }
@@ -293,13 +309,21 @@ const SubmissionsTable = ({ submissions, onViewDetails, onAction }) => {
                         div className = "user-info" >
                         <
                         div className = "user-avatar" > { getUserInitials(s.user) } < /div> <
-                        div className = "user-details" > < h4 > { s.user.firstName } { s.user.lastName } < /h4><p>{s.user.email}</p > < /div> < /
+                        div className = "user-details" >
+                        <
+                        h4 > { `${s.user.firstName} ${s.user.lastName}` } < /h4> <
+                        p > { s.user.email } < /p> < /
                         div > <
-                        /td> <
-                        td className = "table-cell" > < span className = "type-chip" > { s.submissionType } < /span></td >
+                        /div> < /
+                        td > <
+                        td className = "table-cell" >
                         <
-                        td className = "table-cell" > < span className = { `status-chip ${getStatusClass(s.status)}` } > { s.status.replace('_', ' ') } < /span></td >
+                        span className = "type-chip" > { s.submissionType } < /span> < /
+                        td > <
+                        td className = "table-cell" >
                         <
+                        span className = { `status-chip ${getStatusClass(s.status)}` } > { s.status.replace('_', ' ') } < /span> < /
+                        td > <
                         td className = "table-cell" > { s.verificationType || '-' } < /td> <
                         td className = "table-cell" > { new Date(s.createdAt).toLocaleDateString() } < /td> <
                         td className = "table-cell" >
@@ -323,7 +347,8 @@ const SubmissionsTable = ({ submissions, onViewDetails, onAction }) => {
                             onClick = {
                                 () => onAction(s, 'reject')
                             }
-                            title = "Reject" > ❌ < /button> < / >
+                            title = "Reject" > ❌ < /button> < /
+                            >
                         )
                     } <
                     /div> < /
@@ -332,27 +357,13 @@ const SubmissionsTable = ({ submissions, onViewDetails, onAction }) => {
                 ))
         } <
         /tbody> < /
-    table >
+        table >
 );
 };
 
-// Pagination Component
 const Pagination = ({ currentPage, totalPages, onPageChange }) => {
-    const getPageNumbers = () => {
-        const pages = [];
-        const showPages = 5;
-        let startPage = Math.max(1, currentPage - Math.floor(showPages / 2));
-        let endPage = Math.min(totalPages, startPage + showPages - 1);
-
-        if (endPage - startPage + 1 < showPages) {
-            startPage = Math.max(1, endPage - showPages + 1);
-        }
-
-        for (let i = startPage; i <= endPage; i += 1) {
-            pages.push(i);
-        }
-        return pages;
-    };
+    const pages = [];
+    for (let i = 1; i <= totalPages; i += 1) pages.push(i);
 
     return ( <
             div className = "pagination" >
@@ -362,12 +373,12 @@ const Pagination = ({ currentPage, totalPages, onPageChange }) => {
                 () => onPageChange(currentPage - 1)
             }
             disabled = { currentPage === 1 } > ‹ < /button> {
-            getPageNumbers().map((page) => ( <
-                button key = { page }
-                className = { `page-btn ${page === currentPage ? 'active' : ''}` }
+            pages.map((p) => ( <
+                button key = { p }
+                className = { `page-btn ${p === currentPage ? 'active' : ''}` }
                 onClick = {
-                    () => onPageChange(page)
-                } > { page } <
+                    () => onPageChange(p)
+                } > { p } <
                 /button>
             ))
         } <
@@ -380,63 +391,90 @@ const Pagination = ({ currentPage, totalPages, onPageChange }) => {
 );
 };
 
-// DetailModal Component
 const DetailModal = ({ open, submission, onClose }) => {
     if (!open || !submission) return null;
 
     return ( <
-            div className = { `modal-overlay ${open ? 'active' : ''}` } >
-            <
-            div className = "modal" >
-            <
-            div className = "modal-header" >
-            <
-            h2 className = "modal-title" > KYC Submission Details < /h2> <
-            button className = "modal-close"
-            onClick = { onClose } > & times; < /button> < /
-            div > <
-            div className = "modal-content" >
-            <
-            div className = "info-section" >
-            <
-            h4 > User Information < /h4> <
-            div className = "info-item" > < span className = "info-label" > Name < /span><span className="info-value">{submission.user.firstName} {submission.user.lastName}</span > < /div> <
-            div className = "info-item" > < span className = "info-label" > Email < /span><span className="info-value">{submission.user.email}</span > < /div> <
-            div className = "info-item" > < span className = "info-label" > Wallet < /span><span className="info-value">{submission.walletAddress || 'Not provided'}</span > < /div> < /
-            div > <
-            div className = "info-section" >
-            <
-            h4 > Submission Details < /h4> <
-            div className = "info-item" > < span className = "info-label" > Type < /span><span className="info-value">{submission.submissionType}</span > < /div> <
-            div className = "info-item" > < span className = "info-label" > Status < /span><span className="info-value">{submission.status}</span > < /div> <
-            div className = "info-item" > < span className = "info-label" > Verification < /span><span className="info-value">{submission.verificationType || 'Pending'}</span > < /div> <
-            div className = "info-item" > < span className = "info-label" > Submitted < /span><span className="info-value">{new Date(submission.createdAt).toLocaleString()}</span > < /div> {
+        div className = { `modal-overlay ${open ? 'active' : ''}` } >
+        <
+        div className = "modal" >
+        <
+        div className = "modal-header" >
+        <
+        h2 className = "modal-title" > KYC Submission Details < /h2> <
+        button className = "modal-close"
+        onClick = { onClose } > × < /button> < /
+        div > <
+        div className = "modal-content" >
+        <
+        div className = "info-section" >
+        <
+        h4 > User Information < /h4> <
+        div className = "info-item" >
+        <
+        span className = "info-label" > Name < /span> <
+        span className = "info-value" > { `${submission.user.firstName} ${submission.user.lastName}` } < /span> < /
+        div > <
+        div className = "info-item" >
+        <
+        span className = "info-label" > Email < /span> <
+        span className = "info-value" > { submission.user.email } < /span> < /
+        div > <
+        div className = "info-item" >
+        <
+        span className = "info-label" > Wallet < /span> <
+        span className = "info-value" > { submission.walletAddress || 'Not provided' } < /span> < /
+        div > <
+        /div> <
+        div className = "info-section" >
+        <
+        h4 > Submission Details < /h4> <
+        div className = "info-item" >
+        <
+        span className = "info-label" > Type < /span> <
+        span className = "info-value" > { submission.submissionType } < /span> < /
+        div > <
+        div className = "info-item" >
+        <
+        span className = "info-label" > Status < /span> <
+        span className = "info-value" > { submission.status } < /span> < /
+        div > <
+        div className = "info-item" >
+        <
+        span className = "info-label" > Verification < /span> <
+        span className = "info-value" > { submission.verificationType || 'Pending' } < /span> < /
+        div > <
+        div className = "info-item" >
+        <
+        span className = "info-label" > Submitted < /span> <
+        span className = "info-value" > { new Date(submission.createdAt).toLocaleString() } < /span> < /
+        div > {
             submission.rejectionReason && ( <
-                div className = "info-item" > < span className = "info-label" > Rejection Reason < /span><span className="info-value">{submission.rejectionReason}</span > < /div>
+                div className = "info-item" >
+                <
+                span className = "info-label" > Rejection Reason < /span> <
+                span className = "info-value" > { submission.rejectionReason } < /span> < /
+                div >
             )
         } <
         /div> < /
         div > <
         /div> < /
         div >
-);
+    );
 };
 
-// ActionModal Component
 const ActionModal = ({ open, submission, action, onClose, onConfirm }) => {
     const [reason, setReason] = useState('');
-
-    const handleConfirm = () => {
+    if (!open || !submission) return null;
+    const confirm = () => {
         if (action === 'reject' && !reason.trim()) {
-            alert('Please provide a reason for rejection');
+            alert('Provide reason');
             return;
         }
         onConfirm(submission.id, action, reason);
         setReason('');
     };
-
-    if (!open || !submission) return null;
-
     return ( <
         div className = { `modal-overlay ${open ? 'active' : ''}` } >
         <
@@ -447,17 +485,19 @@ const ActionModal = ({ open, submission, action, onClose, onConfirm }) => {
         h2 className = "modal-title" > { action === 'approve' ? 'Approve' : 'Reject' }
         KYC Submission < /h2> <
         button className = "modal-close"
-        onClick = { onClose } > & times; < /button> < /
+        onClick = { onClose } > × < /button> < /
         div > <
         div style = {
-            { marginBottom: '24px' }
+            { marginBottom: 24 }
         } >
         <
         p style = {
-            { marginBottom: '16px', color: '#7f8c8d' }
-        } > User: { submission.user.firstName } { submission.user.lastName } < /p> <
+            { marginBottom: 16, color: '#7f8c8d' }
+        } >
+        User: { submission.user.firstName } { submission.user.lastName } <
+        /p> <
         label style = {
-            { display: 'block', marginBottom: '8px', fontWeight: '500' }
+            { display: 'block', marginBottom: 8, fontWeight: 500 }
         } > { action === 'approve' ? 'Approval' : 'Rejection' }
         Reason: < /label> <
         textarea value = { reason }
@@ -465,36 +505,45 @@ const ActionModal = ({ open, submission, action, onClose, onConfirm }) => {
             (e) => setReason(e.target.value)
         }
         style = {
-            { width: '100%', padding: '12px', border: '2px solid #e0e0e0', borderRadius: '8px', resize: 'vertical', minHeight: '100px' }
+            {
+                width: '100%',
+                padding: 12,
+                border: '2px solid #e0e0e0',
+                borderRadius: 8,
+                resize: 'vertical',
+                minHeight: 100
+            }
         }
         placeholder = { `Enter reason for ${action}...` }
         required = { action === 'reject' }
         /> < /
         div > <
         div style = {
-            { display: 'flex', gap: '12px', justifyContent: 'flex-end' }
+            { display: 'flex', gap: 12, justifyContent: 'flex-end' }
         } >
         <
         button className = "btn btn-outline"
-        onClick = { onClose } > Cancel < /button> <
+        onClick = { onClose } >
+        Cancel <
+        /button> <
         button className = { `btn ${action === 'approve' ? 'btn-primary' : 'btn-reject'}` }
-        onClick = { handleConfirm }
-        disabled = { action === 'reject' && !reason.trim() } > { action === 'approve' ? 'Approve' : 'Reject' } < /button> < /
+        onClick = { confirm }
+        disabled = { action === 'reject' && !reason.trim() } > { action === 'approve' ? 'Approve' : 'Reject' } <
+        /button> < /
         div > <
         /div> < /
         div >
     );
 };
 
-// Notification Component
 const Notification = ({ message, type, onClose }) => ( <
     div className = "notification"
     style = {
-        { background: type === 'success' ? '#27ae60' : '#e74c3c', color: 'white' }
+        { background: type === 'success' ? '#27ae60' : '#e74c3c', color: '#fff' }
     } > { message } <
     button onClick = { onClose }
     style = {
-        { background: 'none', border: 'none', color: 'white', marginLeft: '12px', cursor: 'pointer' }
+        { background: 'none', border: 'none', color: '#fff', marginLeft: 12, cursor: 'pointer' }
     } > × < /button> < /
     div >
 );
