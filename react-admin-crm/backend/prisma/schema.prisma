@@ -417,3 +417,11 @@ enum InvestmentStatus {
   FAILED
   REFUNDED
 }
+
+model ActivityLog {
+  id          String   @id @default(uuid())
+  type        String            // SIGNUP | KYC_UPDATE | TOKENIZE | ...
+  description String
+  userId      String?           // optional
+  createdAt   DateTime @default(now())
+}

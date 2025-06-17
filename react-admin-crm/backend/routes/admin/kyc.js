@@ -2,6 +2,8 @@ const express = require('express');
 const { PrismaClient } = require('@prisma/client');
 const SumsubService = require('../../services/sumsubService');
 const { authorizeRoles } = require('../../middleware/auth');
+const nodemailer = require('nodemailer');
+const sbtService = require('../../services/sbtService');
 
 const router = express.Router();
 const prisma = new PrismaClient();
@@ -152,6 +154,33 @@ router.get('/submission/:submissionId', async(req, res) => {
     }
 });
 
+// Helper: send email notification
+const sendNotificationEmail = async(to, subject, html) => {
+    try {
+        if (!process.env.SMTP_HOST) {
+            console.warn('SMTP not configured – skipping email notification');
+            return;
+        }
+        const transporter = nodemailer.createTransport({
+            host: process.env.SMTP_HOST,
+            port: Number(process.env.SMTP_PORT || 587),
+            secure: false,
+            auth: {
+                user: process.env.SMTP_USER,
+                pass: process.env.SMTP_PASS
+            }
+        });
+        await transporter.sendMail({
+            from: `"RWA-Admin" <${process.env.SMTP_USER}>`,
+            to,
+            subject,
+            html
+        });
+    } catch (err) {
+        console.error('Notification email error:', err);
+    }
+};
+
 /**
  * Approve KYC submission (Admin Override)
  * POST /api/admin/kyc/submission/:submissionId/approve
@@ -199,7 +228,28 @@ router.post('/submission/:submissionId/approve', async(req, res) => {
             }
         });
 
-        // TODO: Blockchain integration (SBT minting, etc.)
+        // Mint SBT (placeholder)
+        try {
+            await sbtService.mintSBT(submission.userId || submission.user.id);
+        } catch (mintErr) {
+            console.error('SBT minting failed:', mintErr);
+        }
+
+        // Activity Log
+        await prisma.activityLog.create({
+            data: {
+                type: 'KYC_UPDATE',
+                description: `Admin ${adminId} APPROVED KYC submission #${submissionId}`,
+                userId: String(submission.userId || submission.user.id)
+            }
+        });
+
+        // Email notification
+        sendNotificationEmail(
+            submission.user.email,
+            'Your KYC submission has been approved',
+            `<p>Hi ${submission.user.firstName || ''},</p><p>Your KYC verification has been <strong>APPROVED</strong>. You can now access all platform features.</p>`
+        );
 
         res.json({
             success: true,
@@ -234,7 +284,10 @@ router.post('/submission/:submissionId/reject', async(req, res) => {
             return res.status(400).json({ success: false, error: 'Rejection reason is required' });
         }
 
-        const submission = await prisma.kYCSubmission.findUnique({ where: { id: submissionId } });
+        const submission = await prisma.kYCSubmission.findUnique({
+            where: { id: submissionId },
+            include: { user: true }
+        });
         if (!submission) {
             return res.status(404).json({ success: false, error: 'Submission not found' });
         }
@@ -261,6 +314,22 @@ router.post('/submission/:submissionId/reject', async(req, res) => {
                 reason
             }
         });
+
+        // Activity Log
+        await prisma.activityLog.create({
+            data: {
+                type: 'KYC_UPDATE',
+                description: `Admin ${adminId} REJECTED KYC submission #${submissionId}`,
+                userId: String(submission.userId)
+            }
+        });
+
+        // Email notification
+        sendNotificationEmail(
+            submission.user ? submission.user.email : undefined,
+            'Your KYC submission has been rejected',
+            `<p>Hi ${submission.user ? submission.user.firstName : ''},</p><p>Your KYC verification has been <strong>REJECTED</strong> for the following reason:</p><p>${reason}</p>`
+        );
 
         res.json({
             success: true,

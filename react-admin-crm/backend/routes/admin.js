@@ -7,12 +7,15 @@ const prisma = new PrismaClient();
 
 // Sub-routers
 const kycRouter = require('./admin/kyc');
+const activityLogRouter = require('./admin/activityLog');
 
 // Apply authentication to all admin routes
 router.use(authenticateToken);
 
 // Mount KYC routes
 router.use('/kyc', kycRouter);
+// Mount Activity Log routes
+router.use('/activity-log', activityLogRouter);
 
 // GET all users with full data (KYC, KYB, Wallets, DIDs, etc.)
 router.get('/users-full', async(req, res) => {
