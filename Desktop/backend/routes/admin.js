@@ -1,6 +1,6 @@
 const express = require('express');
 const { PrismaClient } = require('@prisma/client');
-const { authenticateToken, authorizeRoles } = require('../middleware/auth');
+const { authenticateToken, authorizeRoles, requireAdmin2FA } = require('../middleware/auth');
 
 const router = express.Router();
 const prisma = new PrismaClient();
@@ -8,17 +8,24 @@ const prisma = new PrismaClient();
 // Sub-routers
 const kycRouter = require('./admin/kyc');
 const activityLogRouter = require('./admin/activityLog');
+const profileRouter = require('./admin/profile');
 
 // Apply authentication to all admin routes
 router.use(authenticateToken);
 
-// Mount KYC routes
+// Apply admin role authorization to all routes
+router.use(authorizeRoles(['SUPER_ADMIN', 'ADMIN', 'COMPLIANCE_OFFICER']));
+
+// Mount KYC routes (these will inherit the middleware above)
 router.use('/kyc', kycRouter);
 // Mount Activity Log routes
 router.use('/activity-log', activityLogRouter);
+// Mount Profile routes
+router.use('/profile', profileRouter);
 
 // GET all users with full data (KYC, KYB, Wallets, DIDs, etc.)
-router.get('/users-full', async(req, res) => {
+// Requires 2FA for accessing sensitive user data
+router.get('/users-full', requireAdmin2FA, async(req, res) => {
     try {
         const users = await prisma.user.findMany({
             include: {
@@ -40,6 +47,16 @@ router.get('/users-full', async(req, res) => {
                 }
             }
         });
+
+        // Log admin access to sensitive data
+        await prisma.activityLog.create({
+            data: {
+                type: 'ADMIN_ACCESS_USERS_FULL',
+                description: `Admin ${req.user.email} accessed full user data`,
+                userId: req.user.id
+            }
+        });
+
         res.json(users);
     } catch (error) {
         console.error('Failed to fetch users with full data:', error);
@@ -143,8 +160,8 @@ router.get('/asset-stats', async(req, res) => {
     }
 });
 
-// PUT update user verification status
-router.put('/verify-user/:id', async(req, res) => {
+// PUT update user verification status - REQUIRES 2FA
+router.put('/verify-user/:id', requireAdmin2FA, async(req, res) => {
     try {
         const { id } = req.params;
         const { type, status, verifiedBy } = req.body; // type: 'kyc' or 'kyb'
@@ -166,6 +183,15 @@ router.put('/verify-user/:id', async(req, res) => {
                 data: updateData
             });
         }
+
+        // Log verification action
+        await prisma.activityLog.create({
+            data: {
+                type: 'ADMIN_VERIFICATION_UPDATE',
+                description: `Admin ${req.user.email} updated ${type.toUpperCase()} verification for user ${id} to ${status}`,
+                userId: req.user.id
+            }
+        });
 
         res.json({ message: 'Verification status updated successfully' });
     } catch (error) {
@@ -192,6 +218,24 @@ router.get('/system-health', async(req, res) => {
             where: { createdAt: { gte: thirtyDaysAgo } }
         });
 
+        // 2FA Statistics
+        const usersWithTwoFA = await prisma.user.count({
+            where: { twoFactorEnabled: true }
+        });
+
+        const adminsWith2FA = await prisma.user.count({
+            where: {
+                twoFactorEnabled: true,
+                role: { in: ['SUPER_ADMIN', 'ADMIN', 'COMPLIANCE_OFFICER'] }
+            }
+        });
+
+        const totalAdmins = await prisma.user.count({
+            where: {
+                role: { in: ['SUPER_ADMIN', 'ADMIN', 'COMPLIANCE_OFFICER'] }
+            }
+        });
+
         res.json({
             totalUsers,
             activeUsers,
@@ -200,12 +244,70 @@ router.get('/system-health', async(req, res) => {
             totalAssets,
             totalInvestments,
             recentUsers,
-            systemUptime: '98.5%',
-            lastUpdate: new Date()
+            security: {
+                usersWithTwoFA,
+                twoFactorAdoptionRate: totalUsers > 0 ? ((usersWithTwoFA / totalUsers) * 100).toFixed(2) : 0,
+                adminsWith2FA,
+                adminTwoFactorRate: totalAdmins > 0 ? ((adminsWith2FA / totalAdmins) * 100).toFixed(2) : 0
+            }
         });
     } catch (error) {
         console.error('Failed to fetch system health:', error);
         res.status(500).json({ error: 'Failed to fetch system health' });
+    }
+});
+
+// POST Force disable user account - REQUIRES 2FA (SUPER_ADMIN only)
+router.post('/disable-user/:id', authorizeRoles(['SUPER_ADMIN']), requireAdmin2FA, async(req, res) => {
+    try {
+        const { id } = req.params;
+        const { reason } = req.body;
+
+        await prisma.user.update({
+            where: { id: parseInt(id) },
+            data: { isActive: false }
+        });
+
+        // Log critical action
+        await prisma.activityLog.create({
+            data: {
+                type: 'ADMIN_USER_DISABLED',
+                description: `SUPER_ADMIN ${req.user.email} disabled user ${id}. Reason: ${reason || 'Not specified'}`,
+                userId: req.user.id
+            }
+        });
+
+        res.json({ message: 'User account disabled successfully' });
+    } catch (error) {
+        console.error('Failed to disable user:', error);
+        res.status(500).json({ error: 'Failed to disable user account' });
+    }
+});
+
+// POST Re-enable user account - REQUIRES 2FA (SUPER_ADMIN only)
+router.post('/enable-user/:id', authorizeRoles(['SUPER_ADMIN']), requireAdmin2FA, async(req, res) => {
+    try {
+        const { id } = req.params;
+        const { reason } = req.body;
+
+        await prisma.user.update({
+            where: { id: parseInt(id) },
+            data: { isActive: true }
+        });
+
+        // Log critical action
+        await prisma.activityLog.create({
+            data: {
+                type: 'ADMIN_USER_ENABLED',
+                description: `SUPER_ADMIN ${req.user.email} re-enabled user ${id}. Reason: ${reason || 'Not specified'}`,
+                userId: req.user.id
+            }
+        });
+
+        res.json({ message: 'User account re-enabled successfully' });
+    } catch (error) {
+        console.error('Failed to enable user:', error);
+        res.status(500).json({ error: 'Failed to enable user account' });
     }
 });
 

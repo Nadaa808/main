@@ -117,6 +117,12 @@ model User {
   createdAt         DateTime          @default(now())
   updatedAt         DateTime          @updatedAt
 
+  // 2FA (TOTP) Integration
+  twoFactorEnabled  Boolean           @default(false)
+  twoFactorSecret   String?           // Base32 encoded secret for TOTP
+  twoFactorBackupCodes String?        // JSON array of backup codes
+  twoFactorLastUsed DateTime?         // Prevent replay attacks
+  
   // Optional identity fields (useful for quick look‑ups without joining Wallet table)
   walletAddress     String?           @unique
   didAddress        String?           @unique
@@ -145,6 +151,12 @@ model User {
 
   // Investment Relations (for investors)
   investments       Investment[]
+
+  // Admin Preferences Relation
+  adminPreferences  AdminPreferences? @relation("AdminPreferences")
+
+  // Activity Log Relation
+  activityLogs      ActivityLog[]
 
   // Enhanced indexing for multi-dimensional queries
   @@index([userType, clientType, isActive])
@@ -435,9 +447,49 @@ enum InvestmentStatus {
 }
 
 model ActivityLog {
-  id          String   @id @default(uuid())
-  type        String
+  id          Int      @id @default(autoincrement())
+  type        String   // LOGIN_SUCCESS, FAILED_LOGIN_ATTEMPT, etc.
   description String
   userId      Int?
+  user        User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  metadata    String?  // JSON string for additional data
   createdAt   DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([type, createdAt])
+}
+
+// Admin Preferences Model for Profile Settings
+model AdminPreferences {
+  id                      Int      @id @default(autoincrement())
+  adminId                 Int      @unique
+  admin                   User     @relation("AdminPreferences", fields: [adminId], references: [id], onDelete: Cascade)
+  
+  // UI/UX Preferences
+  dashboardTheme          String   @default("dark")        // light, dark, auto
+  language                String   @default("en")          // en, es, fr, de, zh, ja
+  timezone                String   @default("UTC")
+  
+  // Notification Settings (JSON)
+  notificationSettings    String   @default("{\"emailAlerts\":true,\"securityAlerts\":true,\"systemUpdates\":true,\"weeklyReports\":true}")
+  
+  // Dashboard Layout (JSON)
+  dashboardLayout         String   @default("{\"compactMode\":false,\"showAdvancedMetrics\":true,\"defaultView\":\"overview\"}")
+  
+  // Default Filters (JSON)
+  defaultFilters          String   @default("{\"userStatus\":\"all\",\"verificationStatus\":\"all\",\"dateRange\":\"30d\"}")
+  
+  // System Preferences
+  autoRefreshInterval     Int      @default(300)           // seconds
+  
+  // Security Alerts (JSON)
+  securityAlerts          String   @default("{\"failedLogins\":true,\"suspiciousActivity\":true,\"newAdminActions\":true}")
+  
+  // Data Retention (JSON)
+  dataRetentionPreferences String  @default("{\"activityLogRetention\":\"1y\",\"exportFrequency\":\"monthly\"}")
+  
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+  
+  @@index([adminId])
 }
